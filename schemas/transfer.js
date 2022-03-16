@@ -1,4 +1,4 @@
-const { TransferController } = require('../controllers');
+const { TransferController, StockController } = require('../controllers');
 
 const typeDef = `
     enum TransferType {
@@ -6,9 +6,11 @@ const typeDef = `
       RETURN
     }
     type Stock {
-      sum: Int
-      product_id: Int
-      name: String
+      amount: Int
+      productId: Int
+      departmentId: Int
+      product: Product
+      updatedAt: Date
     }
     type Transfer {
       id: ID
@@ -76,7 +78,7 @@ const resolvers = {
       return TransferController.getAll();
     },
     getInventoryStock: (_, { id }) => {
-      return TransferController.getInventory(id);
+      return StockController.getInventory(id);
     },
   },
   Mutation: {

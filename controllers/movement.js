@@ -4,11 +4,14 @@ const {
   department: DepartmentModel,
   transfer: TransferModel,
   sequelize,
-} = require('../models');
-const { notFound } = require('../libs/errors');
-const { Op } = require('sequelize');
+} = require("../models");
+const { notFound } = require("../libs/errors");
+const { Op } = require("sequelize");
+const StockController = require("./stock");
+const { STOCK_ADD_REMOVE_TYPES } = require("../constants/stock");
 
-const MOVEMENT_TYPES = ['PURCHASE', 'SALE'];
+const MOVEMENT_TYPES = ["PURCHASE", "SALE"];
+const [ADD, REMOVE] = STOCK_ADD_REMOVE_TYPES;
 
 class Movement {
   static async getByDepartment(id) {
@@ -26,6 +29,7 @@ class Movement {
       ],
     });
   }
+
   static async getByDepartmentAndType(id, type) {
     return await MovementModel.findAll({
       where: { type, departmentId: id },
@@ -77,14 +81,15 @@ class Movement {
     let totalFreeAmountSaleProduct = 0;
     let totalProductAmountToReturn = 0;
     movements.forEach((movement, index) => {
-      const movementTotalSaleAtFactoryCost = +movement.amount * +movement.product.factoryPrice
-      movements[index].totalSaleAtFactoryCost = movementTotalSaleAtFactoryCost
-      if (movement.total === 0 && movement.type === 'SALE') {
+      const movementTotalSaleAtFactoryCost =
+        +movement.amount * +movement.product.factoryPrice;
+      movements[index].totalSaleAtFactoryCost = movementTotalSaleAtFactoryCost;
+      if (movement.total === 0 && movement.type === "SALE") {
         freeProducts.push(movement);
         totalFreeAmountSaleProduct += movement.amount;
         totalFreeSale += movement.amount * movement.product.price;
-        totalSaleAtFactoryCost += movementTotalSaleAtFactoryCost
-      } else if (movement.type === 'PURCHASE') {
+        totalSaleAtFactoryCost += movementTotalSaleAtFactoryCost;
+      } else if (movement.type === "PURCHASE") {
         purchaseProducts.push(movement);
         totalAmountPurchaseProduct += movement.amount;
       } else {
@@ -92,7 +97,7 @@ class Movement {
         totalSale += movement.total;
         totalAmountSaleProduct += movement.amount;
         totalSaleCommission += +movement.amount * +movement.product.comission;
-        totalSaleAtFactoryCost += movementTotalSaleAtFactoryCost
+        totalSaleAtFactoryCost += movementTotalSaleAtFactoryCost;
       }
     });
     totalSale += totalFreeSale;
@@ -116,11 +121,11 @@ class Movement {
         {
           model: DepartmentModel,
           required: true,
-          as: 'departmentTo',
+          as: "departmentTo",
         },
         {
           model: DepartmentModel,
-          as: 'departmentFrom',
+          as: "departmentFrom",
           required: true,
         },
         {
@@ -187,6 +192,7 @@ class Movement {
     return movements;
   }
   static async saveMovements(movements) {
+    const t = await sequelize.transaction();
     try {
       // const date = new Date();
       // const month = date.getMonth() + 1;
@@ -196,11 +202,17 @@ class Movement {
       //   ...movement,
       //   date: onlyDate,
       // }));
-      await MovementModel.bulkCreate(movements);
+      await MovementModel.bulkCreate(movements, { transaction: t });
       const [purchaseType] = MOVEMENT_TYPES;
-      const purchases = movements.filter(
-        (movement) => movement.type === purchaseType
-      );
+      const purchases = [];
+      const sales = [];
+      movements.forEach((movement) => {
+        if (movement.type === purchaseType) {
+          purchases.push(movement);
+        } else {
+          sales.push(movement);
+        }
+      });
       const transfers = purchases.map(
         ({ description, departmentId, productId, amount, date }) => ({
           description: `${purchaseType}-${description}`,
@@ -211,25 +223,40 @@ class Movement {
           date,
         })
       );
-      await TransferModel.bulkCreate(transfers);
+      const transfersSales = sales.map(
+        ({ description, departmentId, productId, amount, date }) => ({
+          description: `${description}`,
+          departmentIdFrom: departmentId,
+          departmentIdTo: departmentId,
+          productId: productId,
+          amount: amount,
+          date,
+        })
+      );
+      await TransferModel.bulkCreate(transfers, { transaction: t });
+      await StockController.AddOrRemoveStocks(transfers, ADD);
+      await StockController.AddOrRemoveStocks(transfersSales, REMOVE);
       return true;
     } catch (error) {
-      console.error(error, '------------error');
+      console.error(error, "------------error");
+      await t.rollback();
       return false;
     }
   }
   static async deleteMovement(id) {
     try {
+      // TODO: IMPLEMENTAR LOGICA PARA STOCK
       await MovementModel.destroy({
         where: { id },
       });
       return true;
     } catch (error) {
-      console.error(error, '--------------error');
+      console.error(error, "--------------error");
       return false;
     }
   }
   static async updateMovement(id, data) {
+    // TODO: IMPLEMENTAR LOGICA PARA STOCK
     const course = await MovementModel.findOne({ where: { id } });
     if (!course) {
       throw notFound();
